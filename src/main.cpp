@@ -7,14 +7,19 @@
 #include <Adafruit_SSD1306.h>
 #include <DS3231.h>
 
-#define row2pix(size, pos) (((size) * (pos) * 7))
+#define row2pix(size, pos) ((size) * (pos) * 7)
 
 #define rotary_encoder_pin_a 3
 #define rotary_encoder_pin_b 4
 #define rotary_encoder_button 5
 
-#define door_up_button 6
-#define door_down_button 7
+#define door_up_button 8
+#define door_down_button 9
+
+#define door_max_running_time 5000
+#define door_on 6
+#define door_in3 2
+#define door_in4 7
 
 #define enter_settings_hold_time 2000
 #define blink_time_clock 500
@@ -110,9 +115,9 @@ bool pmFlag;
 bool auto_door_up = false;
 bool auto_door_down = false;
 
-//                     winter  summer
-uint8_t open_hour[2]  {11,     11};
-uint8_t close_hour[2] {23,     19};
+//                    winter  |  summer
+uint8_t open_hour[2]  {11     ,    11};
+uint8_t close_hour[2] {23     ,    19};
 uint8_t is_winter = false;
 #define chs_adr 100
 #define chw_adr 101
@@ -124,6 +129,7 @@ volatile unsigned long previous_encoder_step = 0;
 volatile unsigned int encoder_step = 0;
 unsigned int max_step_size = -1;
 #define encoder_timeout 50
+
 void do_rotary_encoder_step()
 {
         unsigned long t = millis();
@@ -145,23 +151,7 @@ void do_rotary_encoder_step()
                 encoder_step = 0;
 }
 
-void set_eeprom()
-{
-        if (EEPROM.read(chs_adr) != close_hour[1]) {
-                EEPROM.write(chs_adr, close_hour[1]);
-        }
-        if (EEPROM.read(chw_adr) != close_hour[0]) {
-                EEPROM.write(chw_adr, close_hour[0]);
-        }
-        if (EEPROM.read(ohs_adr) != open_hour[1]) {
-                EEPROM.write(ohs_adr, open_hour[1]);
-        }
-        if (EEPROM.read(ohw_adr) != open_hour[0]) {
-                EEPROM.write(ohw_adr, open_hour[0]);
-        }
-}
-
-void wake_screen(const unsigned long t)
+void wake_screen()
 {
         if (!idle) return;
 
@@ -170,69 +160,89 @@ void wake_screen(const unsigned long t)
         display.display();
         delay(200);
         idle = false;
-        previous_activity = t;
+        previous_activity = millis();
         return;
 }
 
 void setup()
 {
-        // Serial.begin(9600);
-        Wire.begin();
-
+        // set pins
         attachInterrupt(digitalPinToInterrupt(rotary_encoder_pin_a), do_rotary_encoder_step, CHANGE);
-        pinMode(rotary_encoder_pin_b, INPUT);
+        pinMode(rotary_encoder_pin_b,  INPUT);
         pinMode(rotary_encoder_button, INPUT);
-        pinMode(door_up_button, INPUT);
-        pinMode(door_down_button, INPUT);
-
-        display.setTextSize(2);
-        display.setTextColor(SSD1306_WHITE);
+        pinMode(door_up_button,        INPUT);
+        pinMode(door_down_button,      INPUT);
+        pinMode(door_on,               OUTPUT);
+        pinMode(door_in3,              OUTPUT);
+        pinMode(door_in4,              OUTPUT);
+        digitalWrite(door_in3,         LOW);
+        digitalWrite(door_in4,         LOW);
+        digitalWrite(door_on,          LOW);
 
         // Read EEPROM
-        if (EEPROM.read(chs_adr) > 23) {
-                EEPROM.write(chs_adr, close_hour[0]);
-        }
-        if (EEPROM.read(chw_adr) > 23) {
-                EEPROM.write(chw_adr, close_hour[0]);
-        }
-        if (EEPROM.read(ohs_adr) > 23) {
-                EEPROM.write(ohs_adr, open_hour[1]);
-        }
-        if (EEPROM.read(ohw_adr) > 23) {
-                EEPROM.write(ohw_adr, open_hour[0]);
-        }
-        open_hour[1] = EEPROM.read(ohs_adr);
-        open_hour[0] = EEPROM.read(ohw_adr);
+        if (EEPROM.read(chs_adr) > 23) EEPROM.write(chs_adr, close_hour[0]);
+        if (EEPROM.read(chw_adr) > 23) EEPROM.write(chw_adr, close_hour[0]);
+        if (EEPROM.read(ohs_adr) > 23) EEPROM.write(ohs_adr, open_hour[1]);
+        if (EEPROM.read(ohw_adr) > 23) EEPROM.write(ohw_adr, open_hour[0]);
+        if (EEPROM.read(isw_adr) > 1)  EEPROM.write(isw_adr, is_winter);
+        open_hour[1]  = EEPROM.read(ohs_adr);
+        open_hour[0]  = EEPROM.read(ohw_adr);
         close_hour[1] = EEPROM.read(chs_adr);
         close_hour[0] = EEPROM.read(chw_adr);
-        is_winter = EEPROM.read(isw_adr);
+        is_winter     = EEPROM.read(isw_adr);
+
+        // start I2C
+        Wire.begin();
 
         if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
                 // Serial.println(F("SSD1306 allocation failed"));
                 for(;;);
         }
-        wake_screen(millis());
+        display.setTextSize(2);
+        display.setTextColor(SSD1306_WHITE);
+        wake_screen();
+
         delay(500);
 }
 
 enum door_state check_door()
 {
-        int up = digitalRead(door_up_button);
-        int down = digitalRead(door_down_button);
+        uint8_t up   = digitalRead(door_up_button);
+        uint8_t down = digitalRead(door_down_button);
 
         if (down == up) return DOOR_MIDDLE;
-        if (up == LOW) return DOOR_UP;
+        if (up == LOW)  return DOOR_UP;
         return DOOR_DOWN;
 }
 
 void open_door()
 {
+        digitalWrite(door_in3, HIGH);
+        digitalWrite(door_in4, LOW);
+        digitalWrite(door_on, HIGH);
 
+        unsigned long start_time = millis();
+        while(digitalRead(door_up_button) != HIGH && millis() - start_time < door_max_running_time);
+
+        delay(10);
+        digitalWrite(door_in3, LOW);
+        digitalWrite(door_in4, LOW);
+        digitalWrite(door_on, LOW);
 }
 
 void close_door()
 {
+        digitalWrite(door_in3, LOW);
+        digitalWrite(door_in4, HIGH);
+        digitalWrite(door_on, HIGH);
 
+        unsigned long start_time = millis();
+        while(digitalRead(door_down_button) != HIGH && millis() - start_time < door_max_running_time);
+
+        delay(10);
+        digitalWrite(door_in3, LOW);
+        digitalWrite(door_in4, LOW);
+        digitalWrite(door_on, LOW);
 }
 
 enum door_state check_time()
@@ -250,14 +260,12 @@ enum door_state check_time()
         if (auto_door_down && auto_door_up) return state;
 
         if (is_winter) {
-                if (state == DOOR_DOWN && hour >= open_hour[0] && !auto_door_up)  goto open;
-                if (state == DOOR_UP && hour >= close_hour[0] && !auto_door_down) goto close;
+                if (state == DOOR_DOWN && hour >= open_hour[0]  && !auto_door_up)   goto open;
+                if (state == DOOR_UP   && hour >= close_hour[0] && !auto_door_down) goto close;
         } else {
-                if (state == DOOR_DOWN && hour >= open_hour[1] && !auto_door_up)  goto open;
-                if (state == DOOR_UP && hour >= close_hour[1] && !auto_door_down) goto close;
+                if (state == DOOR_DOWN && hour >= open_hour[1]  && !auto_door_up)   goto open;
+                if (state == DOOR_UP   && hour >= close_hour[1] && !auto_door_down) goto close;
         }
-
-        return state;
 
         open:
         open_door();
@@ -290,13 +298,11 @@ void check_time_draw()
         display.display();
 }
 
-void toggle_door(const enum door_state state)
+inline void toggle_door(const enum door_state state)
 {
-        if (state == DOOR_UP) {
-                close_door();
-        } else {
-                open_door();
-        }
+        if (state == DOOR_UP) close_door();
+        else                  open_door();
+
 }
 
 void set_time()
@@ -315,17 +321,14 @@ void set_time()
                 display.setCursor(37, 22);
 
                 if (min) {
-                        if (hour < 10) {
-                                display.print("0");
-                        }
+                        if (hour < 10) display.print("0");
                         display.print(hour);
                         display.print(":");
                 }
 
+                // blink hour or min
                 if (!clock_off) {
-                        if (encoder_step < 10) {
-                                display.print("0");
-                        }
+                        if (encoder_step < 10) display.print("0");
                         display.print(encoder_step);
 
                         unsigned long t = millis();
@@ -345,6 +348,7 @@ void set_time()
 
                 if (!min) {
                         display.print(":");
+                        if (minute < 10) display.print("0");
                         display.print(minute);
                 }
 
@@ -403,33 +407,24 @@ void up_down_time()
         bool clock_off = false;
         unsigned long last_change = 0;
 
-
         for(;;) {
                 display.setCursor(0, 0);
-                if (up) {
-                        display.print("Oppe: ");
-                } else {
-                        display.print("Lukk: ");
-                }
+                if (up) display.print("Oppe: ");
+                else    display.print("Lukk: ");
 
-
+                // blink clock
                 unsigned long t = millis();
                 if (!clock_off) {
-                        if (encoder_step < 10) {
-                                display.print("0");
-                        }
+                        if (encoder_step < 10) display.print("0");
                         display.print(encoder_step);
 
                         if (t - last_change >= blink_time_clock) {
                                 clock_off = true;
                                 last_change = t;
                         }
-                } else {
-
-                        if (t - last_change >= blink_time_clock / 3) {
-                                clock_off = false;
-                                last_change = t;
-                        }
+                } else if (t - last_change >= blink_time_clock / 3) {
+                        clock_off = false;
+                        last_change = t;
                 }
 
                 display.display();
@@ -452,18 +447,10 @@ void up_down_time()
                         }
                 }
         }
-        set_eeprom();
-}
-
-typedef struct setting_opt {
-        uint8_t row, size, padding;
-} setting_opt;
-
-void print_setting(const char* setting, setting_opt* opt)
-{
-        opt->row++;
-        display.setCursor(0, row2pix(opt->size, opt->row) + opt->padding * opt->row);
-        display.print(setting);
+        if (EEPROM.read(chs_adr) != close_hour[1]) EEPROM.write(chs_adr, close_hour[1]);
+        if (EEPROM.read(chw_adr) != close_hour[0]) EEPROM.write(chw_adr, close_hour[0]);
+        if (EEPROM.read(ohs_adr) != open_hour[1])  EEPROM.write(ohs_adr, open_hour[1]);
+        if (EEPROM.read(ohw_adr) != open_hour[0])  EEPROM.write(ohw_adr, open_hour[0]);
 }
 
 void settings()
@@ -471,22 +458,16 @@ void settings()
         bool unpressed = false;
         max_step_size = 2;
         encoder_step = 0;
-
-        setting_opt options = {.row = 255, .size = 2, .padding = 5};
-        setting_opt* opt = &options;
+        const uint8_t padding = 5;
 
         const char* setting_names[3] = {" Endre tid", " Sesong", " luke tid"};
         void (*setting_funcs[3])(void) = {set_time, toggle_winter_summer_time, up_down_time};
 
         for(;;) {
-                opt->row = 255;
-
                 for (uint8_t i = 0; i < 3; i++) {
-                        print_setting(setting_names[i], opt);
-                        if (i == encoder_step) {
-                                display.setCursor(0, row2pix(opt->size, opt->row) + opt->row * opt->padding);
-                                display.print(">");
-                        }
+                        if (i == encoder_step) display.print(">");
+                        display.setCursor(0, row2pix(2, i) + padding * i);
+                        display.print(setting_names[i]);
                 }
 
                 display.display();
@@ -498,8 +479,28 @@ void settings()
                                 unpressed = true;
                         }
                 } else if (digitalRead(rotary_encoder_button) == LOW) {
+                        unsigned long start_time = millis();
+                        delay(20);
+
+                        // exit settings
+                        while(digitalRead(rotary_encoder_button) == LOW)  {
+                                if (millis() - start_time >= enter_settings_hold_time) {
+                                        idle = true;
+                                        wake_screen();
+                                        delay(700); // delay to prevent accidental pressing
+                                        return;
+                                }
+                        }
+                        // enter setting
                         setting_funcs[encoder_step]();
                         display.clearDisplay();
+                        return;
+                }
+
+                if (!idle && millis() - previous_activity >= time_til_idle) {
+                        display.clearDisplay();
+                        display.display();
+                        idle = true;
                         return;
                 }
         }
@@ -507,35 +508,31 @@ void settings()
 
 void loop()
 {
-        unsigned long t = millis();
-
         if (wake_up) {
-                wake_screen(t);
+                wake_screen();
                 wake_up = false;
         }
 
         if (!idle) {
                 check_time_draw();
-                if (t - previous_activity >= time_til_idle) {
+                if (millis() - previous_activity >= time_til_idle) {
                         display.clearDisplay();
                         display.display();
                         idle = true;
                 }
-        } else {
-                delay(30);
         }
-
         if (digitalRead(rotary_encoder_button) == LOW) {
-                wake_screen(t);
-                unsigned long start_time = t;
+                unsigned long start_time = millis();
+                wake_screen();
                 delay(20);
 
+                // enter settings
                 while(digitalRead(rotary_encoder_button) == LOW)  {
                         if (millis() - start_time >= enter_settings_hold_time) {
                                 settings();
                                 return;
                         }
                 }
-                delay(1);
+                toggle_door(check_door());
         }
 }
