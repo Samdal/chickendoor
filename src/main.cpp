@@ -185,11 +185,11 @@ void setup()
         if (EEPROM.read(ohs_adr) > 23) EEPROM.write(ohs_adr, open_hour[1]);
         if (EEPROM.read(ohw_adr) > 23) EEPROM.write(ohw_adr, open_hour[0]);
         if (EEPROM.read(isw_adr) > 1)  EEPROM.write(isw_adr, is_winter);
-        open_hour[1]  = EEPROM.read(ohs_adr);
-        open_hour[0]  = EEPROM.read(ohw_adr);
-        close_hour[1] = EEPROM.read(chs_adr);
-        close_hour[0] = EEPROM.read(chw_adr);
-        is_winter     = EEPROM.read(isw_adr);
+        open_hour[1]                 = EEPROM.read(ohs_adr);
+        open_hour[0]                 = EEPROM.read(ohw_adr);
+        close_hour[1]                = EEPROM.read(chs_adr);
+        close_hour[0]                = EEPROM.read(chw_adr);
+        is_winter                    = EEPROM.read(isw_adr);
 
         // start I2C
         Wire.begin();
@@ -245,10 +245,11 @@ void close_door()
         digitalWrite(door_on, LOW);
 }
 
-enum door_state check_time()
+void check_time_draw()
 {
         int prev_hour = hour;
         hour = clock.getHour(h12Flag, pmFlag);
+        enum door_state state = check_door();
 
         // new day
         if (hour < prev_hour) {
@@ -256,31 +257,15 @@ enum door_state check_time()
                 auto_door_up = false;
         }
 
-        enum door_state state = check_door();
-        if (auto_door_down && auto_door_up) return state;
-
-        if (is_winter) {
-                if (state == DOOR_DOWN && hour >= open_hour[0]  && !auto_door_up)   goto open;
-                if (state == DOOR_UP   && hour >= close_hour[0] && !auto_door_down) goto close;
-        } else {
-                if (state == DOOR_DOWN && hour >= open_hour[1]  && !auto_door_up)   goto open;
-                if (state == DOOR_UP   && hour >= close_hour[1] && !auto_door_down) goto close;
+        if (hour >= close_hour[is_winter] && !auto_door_down) {
+                auto_door_up = true;
+                auto_door_down = true;
+                if (state == DOOR_UP) close_door();
+        } else if (hour >= open_hour[is_winter] && !auto_door_up) {
+                auto_door_up = true;
+                if (state == DOOR_DOWN) open_door();
         }
 
-        open:
-        open_door();
-        auto_door_up = true;
-        return state;
-
-        close:
-        close_door();
-        auto_door_down = true;
-        return state;
-}
-
-void check_time_draw()
-{
-        enum door_state state = check_time();
         display.clearDisplay();
         display.setCursor(0, 0);
 
@@ -298,8 +283,9 @@ void check_time_draw()
         display.display();
 }
 
-inline void toggle_door(const enum door_state state)
+inline void toggle_door()
 {
+        enum door_state state = check_door();
         if (state == DOOR_UP) close_door();
         else                  open_door();
 
@@ -390,10 +376,7 @@ void toggle_winter_summer_time()
         display.print(mode[is_winter]);
         display.display();
 
-        if (EEPROM.read(isw_adr) != is_winter) {
-                EEPROM.write(isw_adr, is_winter);
-        }
-
+        if (EEPROM.read(isw_adr) != is_winter) EEPROM.write(isw_adr, is_winter);
         delay(1700);
 }
 
@@ -533,6 +516,6 @@ void loop()
                                 return;
                         }
                 }
-                toggle_door(check_door());
+                toggle_door();
         }
 }
