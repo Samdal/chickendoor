@@ -222,7 +222,7 @@ void open_door()
         digitalWrite(door_on, HIGH);
 
         unsigned long start_time = millis();
-        while(digitalRead(door_up_button) != HIGH && millis() - start_time < door_max_running_time);
+        while(digitalRead(door_up_button) == HIGH && millis() - start_time < door_max_running_time);
 
         delay(10);
         digitalWrite(door_in3, LOW);
@@ -237,7 +237,7 @@ void close_door()
         digitalWrite(door_on, HIGH);
 
         unsigned long start_time = millis();
-        while(digitalRead(door_down_button) != HIGH && millis() - start_time < door_max_running_time);
+        while(digitalRead(door_down_button) == HIGH && millis() - start_time < door_max_running_time);
 
         delay(10);
         digitalWrite(door_in3, LOW);
@@ -377,7 +377,7 @@ void toggle_winter_summer_time()
         display.display();
 
         if (EEPROM.read(isw_adr) != is_winter) EEPROM.write(isw_adr, is_winter);
-        delay(1700);
+        delay(1500);
 }
 
 void up_down_time()
@@ -443,13 +443,13 @@ void settings()
         encoder_step = 0;
         const uint8_t padding = 5;
 
-        const char* setting_names[3] = {" Endre tid", " Sesong", " luke tid"};
+        const char* setting_names[3] = {"Endre tid", "Sesong", "Luke tid"};
         void (*setting_funcs[3])(void) = {set_time, toggle_winter_summer_time, up_down_time};
 
         for(;;) {
                 for (uint8_t i = 0; i < 3; i++) {
-                        if (i == encoder_step) display.print(">");
                         display.setCursor(0, row2pix(2, i) + padding * i);
+                        if (i == encoder_step) display.print(">");
                         display.print(setting_names[i]);
                 }
 
@@ -469,21 +469,15 @@ void settings()
                         while(digitalRead(rotary_encoder_button) == LOW)  {
                                 if (millis() - start_time >= enter_settings_hold_time) {
                                         idle = true;
-                                        wake_screen();
-                                        delay(700); // delay to prevent accidental pressing
                                         return;
                                 }
                         }
                         // enter setting
                         setting_funcs[encoder_step]();
-                        display.clearDisplay();
                         return;
                 }
 
                 if (!idle && millis() - previous_activity >= time_til_idle) {
-                        display.clearDisplay();
-                        display.display();
-                        idle = true;
                         return;
                 }
         }
@@ -513,6 +507,11 @@ void loop()
                 while(digitalRead(rotary_encoder_button) == LOW)  {
                         if (millis() - start_time >= enter_settings_hold_time) {
                                 settings();
+
+                                idle = true;
+                                wake_screen();
+                                while(digitalRead(rotary_encoder_button) == LOW);
+                                delay(700);
                                 return;
                         }
                 }
