@@ -106,7 +106,7 @@ const unsigned char chicken_logo[1024] PROGMEM = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-DS3231 clock;
+DS3231 rt_clock;
 int hour = 23;
 bool century = false;
 bool h12Flag;
@@ -211,7 +211,7 @@ enum door_state check_door()
         uint8_t down = digitalRead(door_down_button);
 
         if (down == up) return DOOR_MIDDLE;
-        if (up == LOW)  return DOOR_UP;
+        if (up == HIGH)  return DOOR_UP;
         return DOOR_DOWN;
 }
 
@@ -222,7 +222,7 @@ void open_door()
         digitalWrite(door_on, HIGH);
 
         unsigned long start_time = millis();
-        while(digitalRead(door_up_button) == HIGH && millis() - start_time < door_max_running_time);
+        while(digitalRead(door_up_button) == LOW && millis() - start_time < door_max_running_time);
 
         delay(10);
         digitalWrite(door_in3, LOW);
@@ -237,7 +237,7 @@ void close_door()
         digitalWrite(door_on, HIGH);
 
         unsigned long start_time = millis();
-        while(digitalRead(door_down_button) == HIGH && millis() - start_time < door_max_running_time);
+        while(digitalRead(door_down_button) == LOW && millis() - start_time < door_max_running_time);
 
         delay(10);
         digitalWrite(door_in3, LOW);
@@ -248,7 +248,7 @@ void close_door()
 void check_time_draw()
 {
         int prev_hour = hour;
-        hour = clock.getHour(h12Flag, pmFlag);
+        hour = rt_clock.getHour(h12Flag, pmFlag);
         enum door_state state = check_door();
 
         // new day
@@ -297,7 +297,7 @@ void set_time()
         max_step_size = 23;
         encoder_step = hour;
 
-        uint8_t minute = clock.getMinute();
+        uint8_t minute = rt_clock.getMinute();
         bool min = false;
 
         bool clock_off = false;
@@ -360,8 +360,8 @@ void set_time()
                 }
         }
 
-        clock.setHour(hour);
-        clock.setMinute(minute);
+        rt_clock.setHour(hour);
+        rt_clock.setMinute(minute);
 }
 
 void toggle_winter_summer_time()
